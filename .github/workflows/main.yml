@@ -28,39 +28,35 @@ jobs:
           echo "ANDROID_NDK_HOME=/opt/ndk/android-ndk-r25c" >> $GITHUB_ENV
           
           
-      - name: Build static OpenSSL 1.1.1w with musl for aarch64
+      
+      - name: Cross-compile OpenSSL 1.1.1w for Android arm64 (static)
         run: |
-          export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
-          
-          # 调试 toolchain
-          which aarch64-linux-musl-gcc || echo "Toolchain missing!"
-          aarch64-linux-musl-gcc --version
-          
-          # 下载并解压
-          wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
-          tar xzf openssl-1.1.1w.tar.gz
-          cd openssl-1.1.1w
-          
-          # 先 export CFLAGS / LDFLAGS（关键！）
-          export CFLAGS="-march=armv8-a -O3 -ffunction-sections -fdata-sections"
-          export LDFLAGS="-static"
-          
-          # Configure 时**不要**带 CFLAGS= 或 LDFLAGS= 参数
-          ./Configure linux-aarch64 \
-            no-shared -static \
-            --cross-compile-prefix=aarch64-linux-musl- \
-            --prefix=/opt/openssl-aarch64 \
-            --openssldir=/opt/openssl-aarch64/ssl \
-            -DOPENSSL_NO_DEPRECATED \
-            -D__ANDROID_API__=21   # 可选，如果有 Android 相关宏需求
-          
-          # 构建库
-          make depend
-          make -j$(nproc) build_libs
-          sudo make install_sw
-          
-          # 验证
-          ls -lh /opt/openssl-aarch64/lib/libcrypto.a /opt/openssl-aarch64/lib/libssl.a
+          git clone https://github.com/openssl/openssl.git
+          cd openssl
+          git checkout OpenSSL_1_1_1w
+    
+          export ANDROID_NDK_HOME=/opt/ndk
+          export PATH=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          export CC=aarch64-linux-android34-clang
+          export CXX=aarch64-linux-android34-clang++
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+    
+          rm -rf fuzz
+          ./Configure android-arm64 no-shared no-asm no-tests -static \
+            --prefix=/opt/openssl-android \
+            --openssldir=/opt/openssl-android/ssl \
+            -D__ANDROID_API__=34
+    
+          mkdir -p fuzz
+          touch fuzz/build.info
+    
+          # make -j$(nproc)
+          # 关键：确保 CFLAGS 包含 -fPIC（android-arm64 通常已包含，但显式加更安全）
+          make -j$(nproc) CFLAGS="-fPIC -O2"
+          make install_sw install_ssldirs
+
                 
           
       - name: Build static expat
