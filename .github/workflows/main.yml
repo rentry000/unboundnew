@@ -62,36 +62,43 @@ jobs:
 
                 
           
-      - name: Build static expat for Android arm64
+      - name: Build static expat for Android arm64 (NDK r27+ fix)
         run: |
           git clone https://github.com/libexpat/libexpat.git
           cd libexpat/expat
 
           ./buildconf.sh
 
-          # 定义 NDK sysroot（r21e 的标准路径）
+          # NDK r27+ 的 sysroot 路径（统一确认）
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export NDK_TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
 
+          # 显式定义所有工具（避免 PATH 问题）
+          export CC=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang
+          export CXX=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang++
+          export AR=$NDK_TOOLCHAIN/bin/llvm-ar
+          export RANLIB=$NDK_TOOLCHAIN/bin/llvm-ranlib
+          export LD=$NDK_TOOLCHAIN/bin/ld.lld   # NDK r25+ 推荐 lld 链接器
+
+          # 配置（关键：--with-sysroot + --sysroot 到 flags）
           ./configure --host=aarch64-linux-android \
+            --build=x86_64-pc-linux-gnu \
             --prefix=/opt/expat-android \
             --disable-shared --enable-static \
             --with-sysroot=$SYSROOT \
-            CC=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang \
-            CXX=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang++ \
-            AR=$NDK_TOOLCHAIN/bin/llvm-ar \
-            RANLIB=$NDK_TOOLCHAIN/bin/llvm-ranlib \
-            STRIP=$NDK_TOOLCHAIN/bin/llvm-strip \
+            CC="$CC --sysroot=$SYSROOT" \
+            CXX="$CXX --sysroot=$SYSROOT" \
             CFLAGS="-I/opt/openssl-android/include -O2 -fPIC --sysroot=$SYSROOT" \
-            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections"
+            LDFLAGS="-L/opt/openssl-android/lib -L$SYSROOT/usr/lib/aarch64-linux-android -static --sysroot=$SYSROOT -Wl,--gc-sections -fuse-ld=lld"
 
           make -j$(nproc)
           sudo make install
 
-          # 调试：如果 configure 还是失败，打印 config.log 尾部
+          # 如果 configure 失败，强制打印 config.log 关键部分
           if [ $? -ne 0 ]; then
-            echo "Configure failed. Last 50 lines of config.log:"
-            tail -n 50 config.log
+            echo "===== Configure failed! config.log tail ====="
+            tail -n 80 config.log | grep -i -e error -e cannot -e undefined -e crt -e ld: || cat config.log | tail -n 50
+            exit 1
           fi
           
 
