@@ -1,4 +1,4 @@
-name: Build Unbound static for Android (aarch64)
+name: Build Unbound static for Android arm64 (NDK r27.3)
 
 on:
   push:
@@ -7,74 +7,57 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04   # 或 ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Unbound
         uses: actions/checkout@v4
         with:
           repository: NLnetLabs/unbound
-          ref: release-1.21.0   # 改成你想要的 tag，例如 release-1.21.0 或 master
+          ref: release-1.21.0   # 可改成 master 或你想要的版本
 
-      - name: Install build essentials
+      - name: Setup NDK r27.3 (Actions 自带，无需下载)
         run: |
-          sudo apt update
-          sudo apt install -y git build-essential autoconf automake libtool pkg-config \
-            bison flex perl make curl wget xz-utils bzip2
-      - name: Cross-compile OpenSSL 1.1.1w static for Android arm64
+          export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
+          echo "NDK=$NDK" >> $GITHUB_ENV
+          echo "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Verify NDK
         run: |
-          # 下载 NDK r21e（兼容好，clang 命名稳定）
-          wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip -O ndk.zip
-          unzip -q ndk.zip -d /opt
-          mv /opt/android-ndk-r21e /opt/ndk
-          export ANDROID_NDK_HOME=/opt/ndk
-          export PATH=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
-      
-          # 调试：确认 clang 存在（会输出 aarch64-linux-android*-clang 等文件）
-          ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*clang*
-      
-          # Clone OpenSSL
+          aarch64-linux-android28-clang --version
+
+      - name: Build static OpenSSL 1.1.1w
+        run: |
           git clone https://github.com/openssl/openssl.git
           cd openssl
           git checkout OpenSSL_1_1_1w
-      
-          # workaround for fuzz dir (1.1.1 常见坑)
+
           rm -rf fuzz || true
           mkdir -p fuzz
           touch fuzz/build.info
-      
-          # 配置：让 Configure 自动用正确的 clang（不要手动 export CC）
-          # 用 no-asm 避开 ARM 汇编问题（可选但推荐，手机 DNS 影响小）
+
           ./Configure android-arm64 \
-            no-shared -static \
-            no-asm no-tests \
+            no-shared -static no-asm no-tests \
             --prefix=/opt/openssl-android \
             --openssldir=/opt/openssl-android/ssl \
-            -D__ANDROID_API__=28   # 或 21/23/34，根据 unbound 需求；28 兼容好
-      
-          # 构建库 + 安装
-          make depend
-          make -j$(nproc) build_libs   # 或 build_sw 如果需要完整
-          make install_sw install_ssldirs
-      
-          # 验证静态库输出
-          ls -lh /opt/openssl-android/lib/libcrypto.a /opt/openssl-android/lib/libssl.a
+            -D__ANDROID_API__=28
 
-                
-          
-      - name: Build static expat for Android arm64 (NDK r27.3 final fix)
+          make depend
+          make -j$(nproc) build_libs
+          sudo make install_sw install_ssldirs
+
+          ls -lh /opt/openssl-android/lib/lib*.a
+
+      - name: Build static expat (最终修复版)
         run: |
           git clone https://github.com/libexpat/libexpat.git
           cd libexpat/expat
-
           ./buildconf.sh
 
-          # 使用 Actions 自带 NDK r27.3（无需下载，速度快）
           export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
           export SYSROOT=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
           export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-          # 关键修复：CC/CXX 必须带 --target 和 --sysroot
           export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export AR=$TOOLCHAIN/llvm-ar
@@ -86,66 +69,44 @@ jobs:
             --disable-shared --enable-static \
             CFLAGS="-I/opt/openssl-android/include -O2 -fPIC --sysroot=$SYSROOT" \
             LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections -fuse-ld=lld" \
+            ac_cv_prog_cc_c99=yes \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes
 
           make -j$(nproc)
           sudo make install
 
-          # 如果失败自动打印 config.log（方便我继续帮你）
-          if [ $? -ne 0 ]; then
-            echo "===== CONFIGURE FAILED - showing config.log tail ====="
-            tail -n 120 config.log
-            exit 1
-          fi
+          ls -lh /opt/expat-android/lib/libexpat.a
 
-          ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
-          
-
-      - name: Setup musl cross toolchain (aarch64)
+      - name: Build Unbound static
         run: |
-          # 使用稳定 mirror + 重试 + 超时设置
-          wget --tries=10 --timeout=60 --continue \
-            https://more.musl.cc/aarch64-linux-musl-cross.tgz \
-            -O aarch64-linux-musl-cross.tgz
+          export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
+          export SYSROOT=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-          tar xzf aarch64-linux-musl-cross.tgz
-          sudo mv aarch64-linux-musl-cross /opt/
-          echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-
-          # 验证工具链可用
-          ls /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc
-          /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc --version
-
-      - name: Configure & build Unbound static
-        run: |
-          cd $GITHUB_WORKSPACE
-          ./configure --host=aarch64-linux-musl \
+          ./configure --host=aarch64-linux-android \
             --prefix=/opt/unbound \
             --disable-shared --enable-static \
-            --with-ssl=/opt/openssl-aarch64 \
-            --with-libexpat=/opt/expat-aarch64 \
+            --with-ssl=/opt/openssl-android \
+            --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
-            CC=aarch64-linux-musl-gcc \
-            CFLAGS="-I/opt/openssl-aarch64/include -I/opt/expat-aarch64/include -Os -ffunction-sections -fdata-sections" \
-            LDFLAGS="-L/opt/openssl-aarch64/lib64 -L/opt/expat-aarch64/lib -static -Wl,--gc-sections"
+            CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
+            CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
+            AR=$TOOLCHAIN/llvm-ar \
+            RANLIB=$TOOLCHAIN/llvm-ranlib \
+            STRIP=$TOOLCHAIN/llvm-strip \
+            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC --sysroot=$SYSROOT" \
+            LDFLAGS="-L/opt/openssl-android/lib -L/opt/expat-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections"
 
           make -j$(nproc)
-          make install DESTDIR=$GITHUB_WORKSPACE/artifacts
+          $TOOLCHAIN/llvm-strip src/unbound
 
-      - name: Strip binary (make it smaller)
-        run: |
-          aarch64-linux-musl-strip $GITHUB_WORKSPACE/artifacts/opt/unbound/sbin/unbound
-          aarch64-linux-musl-strip $GITHUB_WORKSPACE/artifacts/opt/unbound/bin/unbound-control 2>/dev/null || true
+          file src/unbound
+          echo "=== 二进制大小 ==="
+          ls -lh src/unbound
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: unbound-static-android-aarch64
-          path: |
-            artifacts/opt/unbound/sbin/unbound
-            artifacts/opt/unbound/bin/unbound-*
-            artifacts/opt/unbound/etc/unbound/unbound.conf
-
-      - name: Show binary size
-        run: ls -lh artifacts/opt/unbound/sbin/unbound
+          name: unbound-static-android-arm64
+          path: src/unbound
