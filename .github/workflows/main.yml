@@ -104,16 +104,15 @@ jobs:
 
       - name: Configure & build Unbound static for Android arm64
         run: |
-          # 使用你前面已经下载好的 NDK r21e
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-          # 关键修复：CC 只留纯命令，--target 和 --sysroot 移到 CFLAGS/LDFLAGS
           export CC=$TOOLCHAIN/aarch64-linux-android28-clang
           export CXX=$TOOLCHAIN/aarch64-linux-android28-clang++
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export LD=$TOOLCHAIN/ld.lld
           export STRIP=$TOOLCHAIN/llvm-strip
 
           ./configure --host=aarch64-linux-android \
@@ -123,18 +122,25 @@ jobs:
             --with-ssl=/opt/openssl-android \
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
+            --with-sysroot=$SYSROOT \
             CFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC" \
             LDFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -L/opt/openssl-android/lib -L/opt/expat-android/lib -static -Wl,--gc-sections -fuse-ld=lld" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
-            ac_cv_prog_cc_c99=yes
+            ac_cv_prog_cc_c99=yes \
+            ac_cv_prog_cc_cross=yes
+
+          # 如果 configure 失败，自动打印 config.log 关键部分（告诉我看这个）
+          if [ $? -ne 0 ]; then
+            echo "===== CONFIGURE FAILED - config.log tail (last 150 lines) ====="
+            tail -n 150 config.log
+            exit 1
+          fi
 
           make -j$(nproc)
-
-          # strip 减小体积
           $STRIP src/unbound
 
-          echo "=== Build Result ==="
+          echo "=== Build Success ==="
           file src/unbound
           ls -lh src/unbound
 
