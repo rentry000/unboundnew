@@ -22,24 +22,20 @@ jobs:
           sudo apt install -y git build-essential autoconf automake libtool pkg-config \
             bison flex perl make curl wget xz-utils bzip2
 
-      - name: Build static OpenSSL 1.1.1w with musl
+      - name: Download & build static OpenSSL (musl)
         run: |
-          git clone https://github.com/openssl/openssl.git
-          cd openssl
-          git checkout OpenSSL_1_1_1w   # 或直接用 release tag
+          wget https://www.openssl.org/source/openssl-3.3.2.tar.gz
+          tar xzf openssl-3.3.2.tar.gz
+          cd openssl-3.3.2
 
-          # 关键：用 linux-aarch64，不要用 android-xxx
-          # 加上 -static -no-shared 强制全静态
-          # --cross-compile-prefix= 指定你的 musl cross gcc 前缀
-          ./Configure linux-aarch64 \
-            no-shared -static \
-            --cross-compile-prefix=aarch64-linux-musl- \
+          # 用 linux-aarch64 + no-shared + musl 环境
+          # 这里假设我们后面会用 aarch64-linux-musl-gcc
+          ./Configure linux-aarch64 no-shared -static \
             --prefix=/opt/openssl-aarch64 \
-            --openssldir=/opt/openssl-aarch64/ssl \
-            -DOPENSSL_NO_DEPRECATED -D__ANDROID_API__=21  # 可选，模拟 Android API
+            --openssldir=/opt/openssl-aarch64/ssl
 
-          make -j$(nproc) build_libs   # 只 build 库，不 build apps（更快）
-          sudo make install_sw         # install headers + libs
+          make -j$(nproc)
+          sudo make install
 
       - name: Build static expat
         run: |
