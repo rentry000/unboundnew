@@ -32,34 +32,35 @@ jobs:
         run: |
           export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
           
-          # 调试：确认 cross-compiler 可用
-          which aarch64-linux-musl-gcc || echo "Toolchain not found!"
-          aarch64-linux-musl-gcc --version || echo "Version check failed!"
+          # 调试 toolchain
+          which aarch64-linux-musl-gcc || echo "Toolchain missing!"
+          aarch64-linux-musl-gcc --version
           
-          # 下载并解压 OpenSSL 1.1.1w
+          # 下载并解压
           wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
           tar xzf openssl-1.1.1w.tar.gz
           cd openssl-1.1.1w
           
-          # 配置：linux-aarch64 + 强制静态 + ARM64 架构
+          # 先 export CFLAGS / LDFLAGS（关键！）
+          export CFLAGS="-march=armv8-a -O3 -ffunction-sections -fdata-sections"
+          export LDFLAGS="-static"
+          
+          # Configure 时**不要**带 CFLAGS= 或 LDFLAGS= 参数
           ./Configure linux-aarch64 \
             no-shared -static \
             --cross-compile-prefix=aarch64-linux-musl- \
             --prefix=/opt/openssl-aarch64 \
             --openssldir=/opt/openssl-aarch64/ssl \
-            CFLAGS="-march=armv8-a -O3 -ffunction-sections -fdata-sections" \
-            LDFLAGS="-static" \
             -DOPENSSL_NO_DEPRECATED \
-            -D__ANDROID_API__=21   # 可选，帮助某些 Android 兼容宏，但 musl 下不一定必须
+            -D__ANDROID_API__=21   # 可选，如果有 Android 相关宏需求
           
-          # 生成依赖 & 只构建库
+          # 构建库
           make depend
           make -j$(nproc) build_libs
           sudo make install_sw
           
-          # 验证是否成功安装静态库
-          ls -lh /opt/openssl-aarch64/lib/libcrypto.a
-          ls -lh /opt/openssl-aarch64/lib/libssl.a
+          # 验证
+          ls -lh /opt/openssl-aarch64/lib/libcrypto.a /opt/openssl-aarch64/lib/libssl.a
                 
           
       - name: Build static expat
