@@ -104,10 +104,18 @@ jobs:
 
       - name: Setup musl cross toolchain (aarch64)
         run: |
-          wget https://musl.cc/aarch64-linux-musl-cross.tgz
+          # 使用稳定 mirror + 重试 + 超时设置
+          wget --tries=10 --timeout=60 --continue \
+            https://more.musl.cc/aarch64-linux-musl-cross.tgz \
+            -O aarch64-linux-musl-cross.tgz
+
           tar xzf aarch64-linux-musl-cross.tgz
           sudo mv aarch64-linux-musl-cross /opt/
           echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+
+          # 验证工具链可用
+          ls /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc
+          /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc --version
 
       - name: Configure & build Unbound static
         run: |
