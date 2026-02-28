@@ -21,22 +21,28 @@ jobs:
           sudo apt update
           sudo apt install -y git build-essential autoconf automake libtool pkg-config \
             bison flex perl make curl wget xz-utils bzip2
-
-      - name: Download & build static OpenSSL (musl)
+      - name: Download NDK
         run: |
-          wget https://www.openssl.org/source/openssl-3.3.2.tar.gz
-          tar xzf openssl-3.3.2.tar.gz
-          cd openssl-3.3.2
-
-          # 用 linux-aarch64 + no-shared + musl 环境
-          # 这里假设我们后面会用 aarch64-linux-musl-gcc
-          ./Configure linux-aarch64 no-shared -static \
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip -d /opt/ndk
+          echo "ANDROID_NDK_HOME=/opt/ndk/android-ndk-r25c" >> $GITHUB_ENV
+      - name: Build static OpenSSL 3.3.2 with musl
+        run: |
+          export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
+          
+          cd openssl-3.3.2  # 假设你已经解压或 clone 到这里
+          
+          ./Configure linux-aarch64 \
+            no-shared -static \
+            --cross-compile-prefix=aarch64-linux-musl- \
             --prefix=/opt/openssl-aarch64 \
-            --openssldir=/opt/openssl-aarch64/ssl
-
-          make -j$(nproc)
-          sudo make install
-
+            --openssldir=/opt/openssl-aarch64/ssl \
+            CFLAGS="-march=armv8-a -O3 -ffunction-sections -fdata-sections" \
+            -DOPENSSL_NO_DEPRECATED
+      
+          make depend
+          make -j$(nproc) build_libs   # 或 build_sw，如果你需要完整安装
+          sudo make install_sw
       - name: Build static expat
         run: |
           git clone https://github.com/libexpat/libexpat.git
