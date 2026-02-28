@@ -102,7 +102,7 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (强制打印 config.log)
+      - name: Configure & build Unbound static for Android arm64 (crt fix + full hack)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
@@ -112,12 +112,12 @@ jobs:
           export CXX=$TOOLCHAIN/aarch64-linux-android28-clang++
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export LD=$TOOLCHAIN/ld.lld
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure with full debug ==="
+          echo "=== Starting configure (with crt/path fixes) ==="
 
-          # 强制关闭 set -e，让 configure 失败后继续执行打印
-          set +e
+          set +e  # 允许失败后继续打印日志
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -127,38 +127,40 @@ jobs:
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
             --with-sysroot=$SYSROOT \
-            CFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC" \
-            LDFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -L/opt/openssl-android/lib -L/opt/expat-android/lib -static -Wl,--gc-sections -fuse-ld=lld" \
+            CFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -I$SYSROOT/usr/include/aarch64-linux-android" \
+            LDFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -L/opt/openssl-android/lib -L/opt/expat-android/lib -L$SYSROOT/usr/lib/aarch64-linux-android -static -Wl,--gc-sections -fuse-ld=lld -Wl,--start-group -lc -lunwind -ldl -lm -Wl,--end-group" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_prog_cc_c99=yes \
-            ac_cv_prog_cc_cross=yes
+            ac_cv_prog_cc_cross=yes \
+            ac_cv_header_sys_socket_h=yes \
+            ac_cv_func_socket=yes \
+            ac_cv_func_connect=yes \
+            ac_cv_lib_pthread_pthread_create=yes
 
           CONFIG_STATUS=$?
 
           echo "=== CONFIGURE EXIT CODE: $CONFIG_STATUS ==="
 
-          # 无论成功失败，都强制打印 config.log 的关键部分
-          echo "=== config.log 最后 300 行（完整错误日志）==="
-          tail -n 300 config.log
+          # 强制打印 config.log 关键错误（包含 crt / ld / -lc / cannot）
+          echo "=== config.log 最后 400 行 ==="
+          tail -n 400 config.log
 
-          echo "=== config.log 中包含 error / cannot / ld: / crt / sysroot 的行 ==="
-          grep -i -E 'error|cannot|fail|ld:|crt|sysroot|libc| -lc ' config.log | tail -n 100 || true
+          echo "=== 关键错误过滤（grep error/cannot/ld:/crt/-lc）==="
+          grep -i -E 'error|cannot|fail|ld:|crt|sysroot|libc| -lc |crtbegin|crtend' config.log | tail -n 150 || true
 
-          # 恢复 set -e 并退出
           set -e
+
           if [ $CONFIG_STATUS -ne 0 ]; then
-            echo "=== CONFIGURE FAILED! 请把上面 config.log 内容全部贴给我 ==="
+            echo "Configure 失败！请把上面两个打印块全部复制给我，我根据 config.log 给你最终修复。"
             exit 1
           fi
 
-          echo "=== Configure 成功！开始 make ==="
           make -j$(nproc)
-
           $STRIP src/unbound
 
           echo "=== Build Success ==="
-          file src/unbound
+          file src/unbound   # 应该显示 "ELF 64-bit LSB executable, ARM aarch64, ... statically linked"
           ls -lh src/unbound
 
       - name: Upload artifact
