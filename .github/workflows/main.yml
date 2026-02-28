@@ -1,0 +1,92 @@
+name: Build Unbound static for Android (aarch64)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04   # 或 ubuntu-latest
+
+    steps:
+      - name: Checkout Unbound
+        uses: actions/checkout@v4
+        with:
+          repository: NLnetLabs/unbound
+          ref: release-1.21.0   # 改成你想要的 tag，例如 release-1.21.0 或 master
+
+      - name: Install build essentials
+        run: |
+          sudo apt update
+          sudo apt install -y git build-essential autoconf automake libtool pkg-config \
+            bison flex perl make curl wget xz-utils bzip2
+
+      - name: Download & build static OpenSSL (musl)
+        run: |
+          wget https://www.openssl.org/source/openssl-3.3.2.tar.gz
+          tar xzf openssl-3.3.2.tar.gz
+          cd openssl-3.3.2
+
+          # 用 linux-aarch64 + no-shared + musl 环境
+          # 这里假设我们后面会用 aarch64-linux-musl-gcc
+          ./Configure linux-aarch64 no-shared -static \
+            --prefix=/opt/openssl-aarch64 \
+            --openssldir=/opt/openssl-aarch64/ssl
+
+          make -j$(nproc)
+          sudo make install
+
+      - name: Build static expat
+        run: |
+          git clone https://github.com/libexpat/libexpat.git
+          cd libexpat/expat
+          ./buildconf.sh
+          ./configure --host=aarch64-linux-musl \
+            --prefix=/opt/expat-aarch64 \
+            --disable-shared --enable-static \
+            CC=aarch64-linux-musl-gcc \
+            CFLAGS="-I/opt/openssl-aarch64/include" \
+            LDFLAGS="-L/opt/openssl-aarch64/lib64 -static"
+          make -j$(nproc)
+          sudo make install
+
+      - name: Setup musl cross toolchain (aarch64)
+        run: |
+          wget https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar xzf aarch64-linux-musl-cross.tgz
+          sudo mv aarch64-linux-musl-cross /opt/
+          echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+
+      - name: Configure & build Unbound static
+        run: |
+          cd $GITHUB_WORKSPACE
+          ./configure --host=aarch64-linux-musl \
+            --prefix=/opt/unbound \
+            --disable-shared --enable-static \
+            --with-ssl=/opt/openssl-aarch64 \
+            --with-libexpat=/opt/expat-aarch64 \
+            --disable-flto --disable-rpath \
+            CC=aarch64-linux-musl-gcc \
+            CFLAGS="-I/opt/openssl-aarch64/include -I/opt/expat-aarch64/include -Os -ffunction-sections -fdata-sections" \
+            LDFLAGS="-L/opt/openssl-aarch64/lib64 -L/opt/expat-aarch64/lib -static -Wl,--gc-sections"
+
+          make -j$(nproc)
+          make install DESTDIR=$GITHUB_WORKSPACE/artifacts
+
+      - name: Strip binary (make it smaller)
+        run: |
+          aarch64-linux-musl-strip $GITHUB_WORKSPACE/artifacts/opt/unbound/sbin/unbound
+          aarch64-linux-musl-strip $GITHUB_WORKSPACE/artifacts/opt/unbound/bin/unbound-control 2>/dev/null || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unbound-static-android-aarch64
+          path: |
+            artifacts/opt/unbound/sbin/unbound
+            artifacts/opt/unbound/bin/unbound-*
+            artifacts/opt/unbound/etc/unbound/unbound.conf
+
+      - name: Show binary size
+        run: ls -lh artifacts/opt/unbound/sbin/unbound
