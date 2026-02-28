@@ -62,19 +62,37 @@ jobs:
 
                 
           
-      - name: Build static expat
+      - name: Build static expat for Android arm64
         run: |
           git clone https://github.com/libexpat/libexpat.git
           cd libexpat/expat
+
           ./buildconf.sh
-          ./configure --host=aarch64-linux-musl \
-            --prefix=/opt/expat-aarch64 \
+
+          # 定义 NDK sysroot（r21e 的标准路径）
+          export SYSROOT=$ANDROID_NDK_HOME/sysroot
+          export NDK_TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+
+          ./configure --host=aarch64-linux-android \
+            --prefix=/opt/expat-android \
             --disable-shared --enable-static \
-            CC=aarch64-linux-musl-gcc \
-            CFLAGS="-I/opt/openssl-aarch64/include" \
-            LDFLAGS="-L/opt/openssl-aarch64/lib64 -static"
+            --with-sysroot=$SYSROOT \
+            CC=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang \
+            CXX=$NDK_TOOLCHAIN/bin/aarch64-linux-android28-clang++ \
+            AR=$NDK_TOOLCHAIN/bin/llvm-ar \
+            RANLIB=$NDK_TOOLCHAIN/bin/llvm-ranlib \
+            STRIP=$NDK_TOOLCHAIN/bin/llvm-strip \
+            CFLAGS="-I/opt/openssl-android/include -O2 -fPIC --sysroot=$SYSROOT" \
+            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections"
+
           make -j$(nproc)
           sudo make install
+
+          # 调试：如果 configure 还是失败，打印 config.log 尾部
+          if [ $? -ne 0 ]; then
+            echo "Configure failed. Last 50 lines of config.log:"
+            tail -n 50 config.log
+          fi
           
 
       - name: Setup musl cross toolchain (aarch64)
