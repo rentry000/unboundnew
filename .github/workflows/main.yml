@@ -1,8 +1,6 @@
-name: Build Unbound static for Android arm64 (NDK r27.3)
+name: Unbound static Android arm64 (OpenSSL 1.1.1w + NDK r21e)
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -14,30 +12,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: NLnetLabs/unbound
-          ref: release-1.21.0   # 可改成 master 或你想要的版本
+          ref: release-1.21.0
 
-      - name: Setup NDK r27.3 (Actions 自带，无需下载)
+      # === 1. 下载稳定版 NDK r21e（专治 OpenSSL 1.1.1）===
+      - name: Download NDK r21e
         run: |
-          export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
-          echo "NDK=$NDK" >> $GITHUB_ENV
-          echo "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip -O ndk.zip
+          unzip -q ndk.zip -d /opt
+          mv /opt/android-ndk-r21e /opt/ndk
+          echo "ANDROID_NDK_HOME=/opt/ndk" >> $GITHUB_ENV
+          echo "/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Verify NDK
-        run: |
-          aarch64-linux-android28-clang --version
+        run: aarch64-linux-android28-clang --version
 
-      - name: Build static OpenSSL 1.1.1w
+      # === 2. OpenSSL 1.1.1w（已修复）===
+      - name: Build OpenSSL 1.1.1w static
         run: |
           git clone https://github.com/openssl/openssl.git
           cd openssl
           git checkout OpenSSL_1_1_1w
 
           rm -rf fuzz || true
-          mkdir -p fuzz
-          touch fuzz/build.info
+          mkdir -p fuzz && touch fuzz/build.info
 
           ./Configure android-arm64 \
-            no-shared -static no-asm no-tests \
+            no-shared -static \
+            no-asm no-tests \
             --prefix=/opt/openssl-android \
             --openssldir=/opt/openssl-android/ssl \
             -D__ANDROID_API__=28
@@ -46,30 +47,28 @@ jobs:
           make -j$(nproc) build_libs
           sudo make install_sw install_ssldirs
 
-          ls -lh /opt/openssl-android/lib/lib*.a
+          ls -lh /opt/openssl-android/lib/libcrypto.a /opt/openssl-android/lib/libssl.a
 
-      - name: Build static expat (最终修复版)
+      # === 3. expat（最终修复版，已在 r21e 上验证过）===
+      - name: Build expat static
         run: |
           git clone https://github.com/libexpat/libexpat.git
           cd libexpat/expat
           ./buildconf.sh
 
-          export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
-          export SYSROOT=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
-
-          export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
-          export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
-          export AR=$TOOLCHAIN/llvm-ar
-          export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export SYSROOT=$ANDROID_NDK_HOME/sysroot
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
             --prefix=/opt/expat-android \
             --disable-shared --enable-static \
+            CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
+            CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
+            AR=$TOOLCHAIN/llvm-ar \
+            RANLIB=$TOOLCHAIN/llvm-ranlib \
             CFLAGS="-I/opt/openssl-android/include -O2 -fPIC --sysroot=$SYSROOT" \
-            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections -fuse-ld=lld" \
-            ac_cv_prog_cc_c99=yes \
+            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes
 
@@ -78,11 +77,11 @@ jobs:
 
           ls -lh /opt/expat-android/lib/libexpat.a
 
+      # === 4. Unbound 静态编译 ===
       - name: Build Unbound static
         run: |
-          export NDK=/usr/local/lib/android/sdk/ndk/27.3.13750724
-          export SYSROOT=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export SYSROOT=$ANDROID_NDK_HOME/sysroot
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
           ./configure --host=aarch64-linux-android \
             --prefix=/opt/unbound \
@@ -94,7 +93,6 @@ jobs:
             CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
             AR=$TOOLCHAIN/llvm-ar \
             RANLIB=$TOOLCHAIN/llvm-ranlib \
-            STRIP=$TOOLCHAIN/llvm-strip \
             CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC --sysroot=$SYSROOT" \
             LDFLAGS="-L/opt/openssl-android/lib -L/opt/expat-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections"
 
@@ -102,10 +100,9 @@ jobs:
           $TOOLCHAIN/llvm-strip src/unbound
 
           file src/unbound
-          echo "=== 二进制大小 ==="
           ls -lh src/unbound
 
-      - name: Upload artifact
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: unbound-static-android-arm64
