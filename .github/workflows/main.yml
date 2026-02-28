@@ -21,6 +21,13 @@ jobs:
           sudo apt update
           sudo apt install -y git build-essential autoconf automake libtool pkg-config \
             bison flex perl make curl wget xz-utils bzip2
+      - name: Download NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip -d /opt/ndk
+          echo "ANDROID_NDK_HOME=/opt/ndk/android-ndk-r25c" >> $GITHUB_ENV
+          
+          
       - name: Build static OpenSSL 3.3.2 with musl for aarch64
         run: |
           export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
@@ -52,7 +59,8 @@ jobs:
           # 验证安装
           ls -l /opt/openssl-aarch64/lib/libcrypto.a
           ls -l /opt/openssl-aarch64/lib/libssl.a
-                sudo make install_sw
+          
+          
       - name: Build static expat
         run: |
           git clone https://github.com/libexpat/libexpat.git
@@ -66,6 +74,7 @@ jobs:
             LDFLAGS="-L/opt/openssl-aarch64/lib64 -static"
           make -j$(nproc)
           sudo make install
+          
 
       - name: Setup musl cross toolchain (aarch64)
         run: |
