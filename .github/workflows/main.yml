@@ -23,48 +23,41 @@ jobs:
             bison flex perl make curl wget xz-utils bzip2
       - name: Cross-compile OpenSSL 1.1.1w static for Android arm64
         run: |
-          # 下载 NDK r21e（linux-x86_64 版，\~1GB，Actions 上可接受）
+          # 下载 NDK r21e（兼容好，clang 命名稳定）
           wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip -O ndk.zip
           unzip -q ndk.zip -d /opt
           mv /opt/android-ndk-r21e /opt/ndk
           export ANDROID_NDK_HOME=/opt/ndk
           export PATH=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
       
-          # 验证 NDK 路径（调试用，可删）
-          ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang || echo "Clang not found!"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          # 调试：确认 clang 存在（会输出 aarch64-linux-android*-clang 等文件）
+          ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*clang*
       
-          # Clone & checkout OpenSSL
+          # Clone OpenSSL
           git clone https://github.com/openssl/openssl.git
           cd openssl
           git checkout OpenSSL_1_1_1w
       
-          # 设置编译器（用 NDK 自带的 clang，API 34 或 28 都行，34 是较新）
-          export CC=aarch64-linux-android34-clang
-          export CXX=aarch64-linux-android34-clang++
-          export AR=llvm-ar
-          export RANLIB=llvm-ranlib
-          export STRIP=llvm-strip
-      
-          # workaround for fuzz dir missing in some tags
+          # workaround for fuzz dir (1.1.1 常见坑)
           rm -rf fuzz || true
           mkdir -p fuzz
           touch fuzz/build.info
       
-          # 配置（关键：no-shared -static + -D__ANDROID_API__）
+          # 配置：让 Configure 自动用正确的 clang（不要手动 export CC）
+          # 用 no-asm 避开 ARM 汇编问题（可选但推荐，手机 DNS 影响小）
           ./Configure android-arm64 \
             no-shared -static \
             no-asm no-tests \
             --prefix=/opt/openssl-android \
             --openssldir=/opt/openssl-android/ssl \
-            -D__ANDROID_API__=28   # 或 21/34，根据你的 unbound/target API 调整
+            -D__ANDROID_API__=28   # 或 21/23/34，根据 unbound 需求；28 兼容好
       
-          # 构建（加 -fPIC 安全，OpenSSL 1.1.1 静态库推荐）
+          # 构建库 + 安装
           make depend
-          make -j$(nproc) build_libs CFLAGS="-fPIC -O2"
+          make -j$(nproc) build_libs   # 或 build_sw 如果需要完整
           make install_sw install_ssldirs
       
-          # 验证输出
+          # 验证静态库输出
           ls -lh /opt/openssl-android/lib/libcrypto.a /opt/openssl-android/lib/libssl.a
 
                 
