@@ -28,20 +28,20 @@ jobs:
           echo "ANDROID_NDK_HOME=/opt/ndk/android-ndk-r25c" >> $GITHUB_ENV
           
           
-      - name: Build static OpenSSL 3.3.2 with musl for aarch64
+      - name: Build static OpenSSL 1.1.1w with musl for aarch64
         run: |
           export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
           
-          # 先确认 toolchain 可用（调试用，可删）
-          which aarch64-linux-musl-gcc
-          aarch64-linux-musl-gcc --version
+          # 调试：确认 cross-compiler 可用
+          which aarch64-linux-musl-gcc || echo "Toolchain not found!"
+          aarch64-linux-musl-gcc --version || echo "Version check failed!"
           
-          # 下载并解压 OpenSSL 3.3.2
-          wget https://www.openssl.org/source/openssl-3.3.2.tar.gz
-          tar xzf openssl-3.3.2.tar.gz
-          cd openssl-3.3.2
+          # 下载并解压 OpenSSL 1.1.1w
+          wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+          tar xzf openssl-1.1.1w.tar.gz
+          cd openssl-1.1.1w
           
-          # 配置：linux-aarch64 + musl cross + 强制 ARM64 架构宏
+          # 配置：linux-aarch64 + 强制静态 + ARM64 架构
           ./Configure linux-aarch64 \
             no-shared -static \
             --cross-compile-prefix=aarch64-linux-musl- \
@@ -49,17 +49,18 @@ jobs:
             --openssldir=/opt/openssl-aarch64/ssl \
             CFLAGS="-march=armv8-a -O3 -ffunction-sections -fdata-sections" \
             LDFLAGS="-static" \
-            -DOPENSSL_NO_DEPRECATED
+            -DOPENSSL_NO_DEPRECATED \
+            -D__ANDROID_API__=21   # 可选，帮助某些 Android 兼容宏，但 musl 下不一定必须
           
-          # 只构建需要的库部分（避免 apps/ 里的潜在问题）
+          # 生成依赖 & 只构建库
           make depend
           make -j$(nproc) build_libs
           sudo make install_sw
           
-          # 验证安装
-          ls -l /opt/openssl-aarch64/lib/libcrypto.a
-          ls -l /opt/openssl-aarch64/lib/libssl.a
-          
+          # 验证是否成功安装静态库
+          ls -lh /opt/openssl-aarch64/lib/libcrypto.a
+          ls -lh /opt/openssl-aarch64/lib/libssl.a
+                
           
       - name: Build static expat
         run: |
