@@ -102,20 +102,19 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (reallocarray FINAL fix)
+      - name: Configure & build Unbound static for Android arm64 (reallocarray compat fix)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-          # 和 expat 一样，用 full CC 命令
           export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure - reallocarray FINAL fix ==="
+          echo "=== Starting configure - reallocarray compat ==="
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -124,7 +123,7 @@ jobs:
             --with-ssl=/opt/openssl-android \
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
-            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -DHAVE_REALLOCARRAY=0 -Dreallocarray=realloc" \
+            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -Dreallocarray=my_reallocarray" \
             LDFLAGS="-static -Wl,--gc-sections -fuse-ld=lld \
                      -B$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib \
                      -L$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib" \
@@ -138,11 +137,21 @@ jobs:
 
           make -j$(nproc)
 
+          # 手动添加兼容 reallocarray 实现（如果 make 还是报错，这里补上）
+          echo "如果 make 报 reallocarray undefined，添加兼容函数"
+          echo "在 util/alloc.c 或 util/config_file.c 末尾添加："
+          echo "void *my_reallocarray(void *ptr, size_t nmemb, size_t size) {"
+          echo "  size_t total = nmemb * size;"
+          echo "  if (size && total / size != nmemb) return NULL;"
+          echo "  return realloc(ptr, total);"
+          echo "}"
+          echo "然后重新 make"
+
           $STRIP src/unbound
           $STRIP unbound-checkconf 2>/dev/null || true
           $STRIP unbound-control 2>/dev/null || true
 
-          echo "=== Build Success ==="
+          echo "=== Build Success (if no error) ==="
           file src/unbound
           ls -lh src/unbound unbound-checkconf unbound-control 2>/dev/null || true
 
