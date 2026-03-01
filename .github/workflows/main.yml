@@ -102,19 +102,20 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (reallocarray final fix)
+      - name: Configure & build Unbound static for Android arm64 (reallocarray FINAL fix)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
+          # 和 expat 一样，用 full CC 命令
           export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure - reallocarray fix ==="
+          echo "=== Starting configure - reallocarray FINAL fix ==="
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -123,16 +124,15 @@ jobs:
             --with-ssl=/opt/openssl-android \
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
-            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC" \
+            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -DHAVE_REALLOCARRAY=0 -Dreallocarray=realloc" \
             LDFLAGS="-static -Wl,--gc-sections -fuse-ld=lld \
                      -B$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib \
                      -L$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib" \
+            ac_cv_func_reallocarray=no \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_prog_cc_c99=yes \
-            ac_cv_prog_cc_cross=yes \
-            ac_cv_header_sys_socket_h=yes \
-            ac_cv_func_reallocarray=no     # ← 关键修复
+            ac_cv_prog_cc_cross=yes
 
           echo "=== Configure 成功，开始 make ==="
 
