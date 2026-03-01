@@ -62,37 +62,47 @@ jobs:
 
                 
           
-      - name: Build static expat for Android arm64 (统一 r21e)
+      - name: Build static expat for Android arm64 (NDK r21e)
         run: |
           git clone https://github.com/libexpat/libexpat.git
           cd libexpat/expat
 
           ./buildconf.sh
 
-          export ANDROID_NDK_HOME=/opt/ndk
-          export SYSROOT=$ANDROID_NDK_HOME/sysroot
-          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          # 使用 Actions 自带 NDK r27.3（无需下载，速度快）
+          export NDK=/opt/ndk
+          export SYSROOT=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+
+          # 关键修复：CC/CXX 必须带 --target 和 --sysroot
+          export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
+          export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
+          export AR=$TOOLCHAIN/llvm-ar
+          export RANLIB=$TOOLCHAIN/llvm-ranlib
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
             --prefix=/opt/expat-android \
             --disable-shared --enable-static \
-            CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
-            CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT" \
-            AR=$TOOLCHAIN/llvm-ar \
-            RANLIB=$TOOLCHAIN/llvm-ranlib \
             CFLAGS="-I/opt/openssl-android/include -O2 -fPIC --sysroot=$SYSROOT" \
-            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections" \
+            LDFLAGS="-L/opt/openssl-android/lib -static --sysroot=$SYSROOT -Wl,--gc-sections -fuse-ld=lld" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes
 
           make -j$(nproc)
           sudo make install
 
-          ls -lh /opt/expat-android/lib/libexpat.a
+          # 如果失败自动打印 config.log（方便我继续帮你）
+          if [ $? -ne 0 ]; then
+            echo "===== CONFIGURE FAILED - showing config.log tail ====="
+            tail -n 120 config.log
+            exit 1
+          fi
+
+          ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (crt fix)
+      - name: Configure & build Unbound static for Android arm64 (crt fix + full hack)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
@@ -102,9 +112,12 @@ jobs:
           export CXX=$TOOLCHAIN/aarch64-linux-android28-clang++
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
+          export LD=$TOOLCHAIN/ld.lld
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          set +e
+          echo "=== Starting configure (with crt/path fixes) ==="
+
+          set +e  # 允许失败后继续打印日志
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -115,27 +128,31 @@ jobs:
             --disable-flto --disable-rpath \
             --with-sysroot=$SYSROOT \
             CFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -I$SYSROOT/usr/include/aarch64-linux-android" \
-            LDFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -L/opt/openssl-android/lib -L/opt/expat-android/lib -L$SYSROOT/usr/lib/aarch64-linux-android/28 -static -Wl,--gc-sections -fuse-ld=lld -Wl,--start-group -lc -lm -ldl -lunwind -Wl,--end-group" \
+            LDFLAGS="--target=aarch64-linux-android28 --sysroot=$SYSROOT -L/opt/openssl-android/lib -L/opt/expat-android/lib -L$SYSROOT/usr/lib/aarch64-linux-android -static -Wl,--gc-sections -fuse-ld=lld -Wl,--start-group -lc -lunwind -ldl -lm -Wl,--end-group" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_prog_cc_c99=yes \
             ac_cv_prog_cc_cross=yes \
-            ac_cv_header_sys_socket_h=yes
+            ac_cv_header_sys_socket_h=yes \
+            ac_cv_func_socket=yes \
+            ac_cv_func_connect=yes \
+            ac_cv_lib_pthread_pthread_create=yes
 
           CONFIG_STATUS=$?
 
           echo "=== CONFIGURE EXIT CODE: $CONFIG_STATUS ==="
 
-          echo "=== config.log 最后 300 行 ==="
-          tail -n 300 config.log
+          # 强制打印 config.log 关键错误（包含 crt / ld / -lc / cannot）
+          echo "=== config.log 最后 400 行 ==="
+          tail -n 400 config.log
 
-          echo "=== 关键错误 grep ==="
-          grep -i -E 'error|cannot|ld:|crt| -lc |crtbegin|crtend' config.log | tail -n 150 || true
+          echo "=== 关键错误过滤（grep error/cannot/ld:/crt/-lc）==="
+          grep -i -E 'error|cannot|fail|ld:|crt|sysroot|libc| -lc |crtbegin|crtend' config.log | tail -n 150 || true
 
           set -e
 
           if [ $CONFIG_STATUS -ne 0 ]; then
-            echo "失败！把上面两个打印块全部贴给我"
+            echo "Configure 失败！请把上面两个打印块全部复制给我，我根据 config.log 给你最终修复。"
             exit 1
           fi
 
@@ -143,7 +160,7 @@ jobs:
           $STRIP src/unbound
 
           echo "=== Build Success ==="
-          file src/unbound
+          file src/unbound   # 应该显示 "ELF 64-bit LSB executable, ARM aarch64, ... statically linked"
           ls -lh src/unbound
 
       - name: Upload artifact
