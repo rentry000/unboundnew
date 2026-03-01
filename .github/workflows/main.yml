@@ -178,19 +178,24 @@ jobs:
           file src/unbound || echo "unbound 未生成"
           ls -lh src/unbound || true
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: unbound-static-android-aarch64
-          path: src/unbound
-      - name: Commit binary to repo
+      - name: Commit and push binary to repo
         if: success()
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 使用 GITHUB_TOKEN 认证（官方推荐方式，避免明文 token）
           git remote set-url origin https://x-access-token:\( {{ secrets.GITHUB_TOKEN }}@github.com/ \){{ github.repository }}.git
+
+          # 拉取最新代码（避免 detached HEAD 或冲突）
+          git fetch origin
+          git checkout main || git checkout -b main
+          git pull origin main --rebase || true  # 如果有冲突，忽略或手动处理
+
           mkdir -p binaries
-          cp src/unbound binaries/unbound-android-aarch64
-          git add binaries/unbound-android-aarch64
+          cp src/unbound binaries/unbound-android-aarch64-$(date +%Y%m%d-%H%M%S)  # 加时间戳避免覆盖
+
+          git add binaries/
           git commit -m "Add unbound static binary for Android aarch64 (build ${{ github.run_number }})" || echo "No changes to commit"
-          git push origin HEAD:main || echo "Push failed or no changes"
+
+          git push origin HEAD:main || echo "Push failed, check permissions or conflicts"
