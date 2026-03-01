@@ -102,22 +102,19 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (FINAL crt fix)
+      - name: Configure & build Unbound static for Android arm64 (reallocarray final fix)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-          # 和 expat 一样，用 full CC 命令
           export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure - FINAL crt fix ==="
-
-          set +e
+          echo "=== Starting configure - reallocarray fix ==="
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -129,38 +126,25 @@ jobs:
             CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC" \
             LDFLAGS="-static -Wl,--gc-sections -fuse-ld=lld \
                      -B$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib \
-                     -L$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib \
-                     -L$SYSROOT/usr/lib/aarch64-linux-android/28 \
-                     -L$SYSROOT/usr/lib/aarch64-linux-android" \
+                     -L$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_prog_cc_c99=yes \
             ac_cv_prog_cc_cross=yes \
-            ac_cv_header_sys_socket_h=yes
+            ac_cv_header_sys_socket_h=yes \
+            ac_cv_func_reallocarray=no     # ← 关键修复
 
-          CONFIG_STATUS=$?
-
-          echo "=== CONFIGURE EXIT CODE: $CONFIG_STATUS ==="
-
-          echo "=== config.log 最后 300 行 ==="
-          tail -n 300 config.log
-
-          echo "=== 关键错误 grep ==="
-          grep -i -E 'error|cannot|ld:|crt|unwind' config.log | tail -n 100 || true
-
-          set -e
-
-          if [ $CONFIG_STATUS -ne 0 ]; then
-            echo "还是失败！把上面 config.log 部分全部贴给我（这次我保证 1 行改好）"
-            exit 1
-          fi
+          echo "=== Configure 成功，开始 make ==="
 
           make -j$(nproc)
+
           $STRIP src/unbound
+          $STRIP unbound-checkconf 2>/dev/null || true
+          $STRIP unbound-control 2>/dev/null || true
 
           echo "=== Build Success ==="
           file src/unbound
-          ls -lh src/unbound
+          ls -lh src/unbound unbound-checkconf unbound-control 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
