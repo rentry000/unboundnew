@@ -186,23 +186,33 @@ jobs:
           
           
       - name: Commit and push binary to repo
-        if: success()
+        if: always()  # 即使前面失败也执行，方便看文件
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 使用 GITHUB_TOKEN 认证（官方推荐方式，避免明文 token）
           git remote set-url origin https://x-access-token:\( {{ secrets.GITHUB_TOKEN }}@github.com/ \){{ github.repository }}.git
 
-          # 拉取最新代码（避免 detached HEAD 或冲突）
           git fetch origin
           git checkout main || git checkout -b main
-          git pull origin main --rebase || true  # 如果有冲突，忽略或手动处理
+          git pull origin main --rebase || true
 
+          # 调试：列出所有可能二进制文件
+          echo "=== 当前目录文件列表 ==="
+          ls -la
+          echo "=== src/ 目录 ==="
+          ls -la src/ || true
+          echo "=== 所有 unbound* 文件 ==="
+          find . -name "*unbound*" -type f -executable 2>/dev/null || true
+
+          # 尝试复制找到的文件（假设是 src/unbound 或其他）
           mkdir -p binaries
-          cp src/unbound binaries/unbound-android-aarch64-$(date +%Y%m%d-%H%M%S)  # 加时间戳避免覆盖
+          cp src/unbound binaries/unbound-android-aarch64 2>/dev/null || \
+          cp unbound binaries/unbound-android-aarch64 2>/dev/null || \
+          cp unbound-checkconf binaries/unbound-checkconf 2>/dev/null || \
+          cp unbound-control binaries/unbound-control 2>/dev/null || \
+          echo "没有找到 unbound 二进制文件！"
 
           git add binaries/
-          git commit -m "Add unbound static binary for Android aarch64 (build ${{ github.run_number }})" || echo "No changes to commit"
+          git commit -m "Add unbound static binary for Android aarch64 (build ${{ github.run_number }}) - attempt ${{ github.run_attempt }}" || echo "No changes or commit failed"
 
-          git push origin HEAD:main || echo "Push failed, check permissions or conflicts"
+          git push origin HEAD:main || echo "Push failed - check permissions or conflicts"
