@@ -102,20 +102,21 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (full CC fix)
+      - name: Configure & build Unbound static for Android arm64 (crt final fix)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
           export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export CLANG_LIB=$TOOLCHAIN/../lib/clang/9.0.9/lib/linux/aarch64   # libunwind 所在目录
 
-          # 关键：和 expat 一样，用 full CC 命令（带 --target --sysroot）
+          # 和 expat 一样，用 full CC 命令
           export CC="$TOOLCHAIN/aarch64-linux-android28-clang --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export CXX="$TOOLCHAIN/aarch64-linux-android28-clang++ --target=aarch64-linux-android28 --sysroot=$SYSROOT"
           export AR=$TOOLCHAIN/llvm-ar
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure with full CC command ==="
+          echo "=== Starting configure with crt fix ==="
 
           set +e
 
@@ -127,7 +128,7 @@ jobs:
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
             CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC" \
-            LDFLAGS="-L/opt/openssl-android/lib -L/opt/expat-android/lib -static -Wl,--gc-sections -fuse-ld=lld -Wl,--start-group -lc -lm -ldl -lunwind -Wl,--end-group" \
+            LDFLAGS="-B$SYSROOT/usr/lib/aarch64-linux-android/28 -L$SYSROOT/usr/lib/aarch64-linux-android/28 -L$SYSROOT/usr/lib/aarch64-linux-android -L$CLANG_LIB -L/opt/openssl-android/lib -L/opt/expat-android/lib -static -Wl,--gc-sections -fuse-ld=lld -Wl,--start-group -lc -lm -ldl -lunwind -Wl,--end-group" \
             ac_cv_func_malloc_0_nonnull=yes \
             ac_cv_func_realloc_0_nonnull=yes \
             ac_cv_prog_cc_c99=yes \
@@ -138,16 +139,16 @@ jobs:
 
           echo "=== CONFIGURE EXIT CODE: $CONFIG_STATUS ==="
 
-          echo "=== config.log 最后 400 行 ==="
-          tail -n 400 config.log
+          echo "=== config.log 最后 300 行 ==="
+          tail -n 300 config.log
 
           echo "=== 关键错误 grep ==="
-          grep -i -E 'error|cannot|fail|ld:|crt|sysroot|libc| -lc |crtbegin|crtend' config.log | tail -n 200 || true
+          grep -i -E 'error|cannot|ld:|crt| -lc |crtbegin|crtend|unwind' config.log | tail -n 100 || true
 
           set -e
 
           if [ $CONFIG_STATUS -ne 0 ]; then
-            echo "Configure 失败！请把上面两个打印块全部复制贴给我"
+            echo "Configure 失败！把上面打印的 config.log 部分贴给我（如果还是错我直接给你一行修复）"
             exit 1
           fi
 
