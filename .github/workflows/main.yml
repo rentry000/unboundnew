@@ -102,7 +102,7 @@ jobs:
           ls -lh /opt/expat-android/lib/libexpat.a   # 验证成功
           
 
-      - name: Configure & build Unbound static for Android arm64 (reallocarray disabled)
+      - name: Configure & build Unbound static for Android arm64 (reallocarray patch fix)
         run: |
           export ANDROID_NDK_HOME=/opt/ndk
           export SYSROOT=$ANDROID_NDK_HOME/sysroot
@@ -114,7 +114,7 @@ jobs:
           export RANLIB=$TOOLCHAIN/llvm-ranlib
           export STRIP=$TOOLCHAIN/llvm-strip
 
-          echo "=== Starting configure - reallocarray disabled ==="
+          echo "=== Starting configure ==="
 
           ./configure --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -123,7 +123,7 @@ jobs:
             --with-ssl=/opt/openssl-android \
             --with-libexpat=/opt/expat-android \
             --disable-flto --disable-rpath \
-            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -DHAVE_REALLOCARRAY=0" \
+            CFLAGS="-I/opt/openssl-android/include -I/opt/expat-android/include -O2 -fPIC -Dreallocarray=my_reallocarray" \
             LDFLAGS="-static -Wl,--gc-sections -fuse-ld=lld \
                      -B$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib \
                      -L$ANDROID_NDK_HOME/platforms/android-28/arch-arm64/usr/lib" \
@@ -134,27 +134,49 @@ jobs:
             ac_cv_prog_cc_cross=yes
 
           if [ $? -ne 0 ]; then
-            echo "Configure 失败！"
             tail -n 200 config.log
             exit 1
           fi
 
-          echo "=== Configure 成功，开始 make ==="
+          echo "=== Configure 成功，开始 make + reallocarray patch ==="
 
+          # 创建兼容实现文件
+          cat > compat_reallocarray.c << 'EOF'
+          #include <stdlib.h>
+          #include <errno.h>
+
+          void *my_reallocarray(void *ptr, size_t nmemb, size_t size) {
+              size_t total;
+              if (size == 0 || nmemb == 0) {
+                  free(ptr);
+                  return malloc(0);
+              }
+              if (nmemb > SIZE_MAX / size) {
+                  errno = ENOMEM;
+                  return NULL;
+              }
+              total = nmemb * size;
+              return realloc(ptr, total);
+          }
+          EOF
+
+          # 编译兼容文件
+          $CC $CFLAGS -c compat_reallocarray.c -o compat_reallocarray.o
+
+          # make
           make -j$(nproc)
 
+          # 链接时加兼容对象文件（如果 make 还是报错，手动链接）
           if [ $? -ne 0 ]; then
-            echo "make 失败！请查看上面 make 报错"
-            exit 1
+            echo "make 失败，尝试手动链接 unbound"
+            $CC $LDFLAGS src/*.o compat_reallocarray.o -o src/unbound -L/opt/openssl-android/lib -L/opt/expat-android/lib -lcrypto -lexpat -lpthread -lm -ldl
           fi
 
           $STRIP src/unbound || true
-          $STRIP unbound-checkconf || true
-          $STRIP unbound-control || true
 
-          echo "=== Build Success ==="
-          file src/unbound || echo "src/unbound 不存在，make 失败"
-          ls -lh src/unbound unbound-checkconf unbound-control 2>/dev/null || true
+          echo "=== Build Result ==="
+          file src/unbound || echo "unbound 未生成"
+          ls -lh src/unbound || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
