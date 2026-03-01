@@ -188,12 +188,11 @@ jobs:
         with:
           name: unbound-static-android-aarch64
           path: |
-            src/unbound
-            unbound
-            unbound-checkconf
-            unbound-control
-            unbound-host
-          if-no-files-found: warn  # 改成 warn，不会让 workflow 失败
+            unbound*
+            src/unbound*
+            src/*.o          # 如果想保留对象文件（可选，通常不需要）
+            *.o
+          if-no-files-found: warn
           
           
       - name: Commit and push binary to repo
