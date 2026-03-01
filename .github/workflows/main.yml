@@ -178,6 +178,13 @@ jobs:
           file src/unbound || echo "unbound 未生成"
           ls -lh src/unbound || true
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unbound-static-android-aarch64
+          path: src/unbound
+          
+          
       - name: Commit and push binary to repo
         if: success()
         run: |
