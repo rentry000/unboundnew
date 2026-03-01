@@ -177,42 +177,62 @@ jobs:
           echo "=== Build Result ==="
           file src/unbound || echo "unbound 未生成"
           ls -lh src/unbound || true
+          # 调试：强制查找所有生成的文件
+          echo "=== make 后文件搜索 ==="
+          find . -name "*unbound*" -type f -executable -print 2>/dev/null || echo "没找到任何 unbound 可执行文件"
+          ls -la src/ || true
+          ls -la . || true
 
-      - name: Upload artifact
+      - name: Upload all unbound binaries
         uses: actions/upload-artifact@v4
         with:
           name: unbound-static-android-aarch64
-          path: src/unbound
+          path: |
+            src/unbound
+            unbound
+            unbound-checkconf
+            unbound-control
+            unbound-host
+          if-no-files-found: warn  # 改成 warn，不会让 workflow 失败
           
           
       - name: Commit and push binary to repo
-        if: always()  # 即使前面失败也执行，方便看文件
+        if: always()  # 即使失败也跑，方便调试
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 正确写法：用 ${{ secrets.GITHUB_TOKEN }}，不要加括号和空格
           git remote set-url origin https://x-access-token:\( {{ secrets.GITHUB_TOKEN }}@github.com/ \){{ github.repository }}.git
 
           git fetch origin
           git checkout main || git checkout -b main
           git pull origin main --rebase || true
 
-          # 调试：列出所有可能二进制文件
-          echo "=== 当前目录文件列表 ==="
+          # 调试：打印所有文件，帮我们定位二进制
+          echo "=== 当前目录文件列表 (ls -la) ==="
           ls -la
-          echo "=== src/ 目录 ==="
+
+          echo "=== src/ 目录内容 ==="
           ls -la src/ || true
-          echo "=== 所有 unbound* 文件 ==="
-          find . -name "*unbound*" -type f -executable 2>/dev/null || true
 
-          # 尝试复制找到的文件（假设是 src/unbound 或其他）
+          echo "=== 查找所有 unbound 相关可执行文件 ==="
+          find . -name "*unbound*" -type f -executable -print 2>/dev/null || echo "没找到任何 unbound* 文件"
+
+          # 创建 binaries 目录
           mkdir -p binaries
-          cp src/unbound binaries/unbound-android-aarch64 2>/dev/null || \
-          cp unbound binaries/unbound-android-aarch64 2>/dev/null || \
-          cp unbound-checkconf binaries/unbound-checkconf 2>/dev/null || \
-          cp unbound-control binaries/unbound-control 2>/dev/null || \
-          echo "没有找到 unbound 二进制文件！"
 
-          git add binaries/
-          git commit -m "Add unbound static binary for Android aarch64 (build ${{ github.run_number }}) - attempt ${{ github.run_attempt }}" || echo "No changes or commit failed"
+          # 尝试复制所有可能的文件（如果找到就成功）
+          cp src/unbound binaries/unbound-android-aarch64 2>/dev/null || true
+          cp unbound binaries/unbound-android-aarch64 2>/dev/null || true
+          cp unbound-checkconf binaries/unbound-checkconf 2>/dev/null || true
+          cp unbound-control binaries/unbound-control 2>/dev/null || true
 
-          git push origin HEAD:main || echo "Push failed - check permissions or conflicts"
+          # 如果复制成功，git add/commit/push
+          if ls binaries/* 1> /dev/null 2>&1; then
+            git add binaries/
+            git commit -m "Add unbound static binaries for Android aarch64 (build ${{ github.run_number }}) - attempt ${{ github.run_attempt }}" || echo "No changes to commit"
+            git push origin HEAD:main || echo "Push failed - 检查仓库权限或分支保护"
+          else
+            echo "没有复制到任何文件！请检查 make 是否生成二进制"
+          fi
