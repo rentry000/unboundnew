@@ -183,3 +183,14 @@ jobs:
         with:
           name: unbound-static-android-aarch64
           path: src/unbound
+      - name: Commit binary to repo
+        if: success()
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:\( {{ secrets.GITHUB_TOKEN }}@github.com/ \){{ github.repository }}.git
+          mkdir -p binaries
+          cp src/unbound binaries/unbound-android-aarch64
+          git add binaries/unbound-android-aarch64
+          git commit -m "Add unbound static binary for Android aarch64 (build ${{ github.run_number }})" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Push failed or no changes"
